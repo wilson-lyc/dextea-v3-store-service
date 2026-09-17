@@ -15,22 +15,36 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/wilson-lyc/dextea-store-service/internal/config"
+	"github.com/wilson-lyc/dextea-store-service/internal/repository"
 	storerpc "github.com/wilson-lyc/dextea-store-service/internal/rpc"
+	"github.com/wilson-lyc/dextea-store-service/internal/service"
+	storev1 "github.com/wilson-lyc/dextea-v3-proto/gen/go/store/v1"
 )
 
 func main() {
-	defaultConfig := config.Default()
-	addr := flag.String("addr", defaultConfig.Server.Addr, "gRPC 监听地址")
+	configPath := flag.String("config", "configs/config.yaml", "配置文件路径")
 	flag.Parse()
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("[fatal] %v", err)
+	}
 
-	listener, err := net.Listen("tcp", *addr)
+	db, err := repository.NewMySQL(cfg.MySQL)
+	if err != nil {
+		log.Fatalf("[fatal] %v", err)
+	}
+	defer db.Close()
+
+	storeService := service.NewStoreService(repository.NewStoreRepository(db))
+	storeServer := storerpc.NewServer(storeService)
+
+	listener, err := net.Listen("tcp", cfg.Server.Addr)
 	if err != nil {
 		log.Fatalf("[fatal] listen: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
-	// 业务 StoreService RPC 待协议仓库定义后注册到这里。
-	_ = storerpc.NewServer()
+	storev1.RegisterStoreServiceServer(grpcServer, storeServer)
 
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
@@ -41,7 +55,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("[info] dextea-store-service gRPC listening on %s", *addr)
+		log.Printf("[info] dextea-store-service gRPC listening on %s", cfg.Server.Addr)
 		if serveErr := grpcServer.Serve(listener); serveErr != nil {
 			log.Printf("[error] gRPC server stopped: %v", serveErr)
 		}
