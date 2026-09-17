@@ -1,0 +1,21 @@
+# Binaries
+/server
+/bin/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Go tooling
+*.test
+*.out
+coverage/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local generated files
+/tmp/
