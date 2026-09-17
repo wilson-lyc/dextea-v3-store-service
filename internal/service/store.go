@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -83,6 +84,18 @@ func (s *StoreService) GetByAccount(ctx context.Context, account string) (*model
 	}
 	if store == nil {
 		return nil, ErrNotFound
+	}
+	return store, nil
+}
+
+// Authenticate 校验门店凭证。Token 签发仍由调用方的 BFF 负责。
+func (s *StoreService) Authenticate(ctx context.Context, account, password string) (*model.Store, error) {
+	store, err := s.GetByAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	if !store.Available() || !verifyPassword(password, store.PasswordHash) {
+		return nil, ErrPassword
 	}
 	return store, nil
 }
@@ -193,6 +206,20 @@ func (s *StoreService) ResetPassword(ctx context.Context, id uint64, oldPassword
 	return updated, newPassword, err
 }
 
+func (s *StoreService) ChangePassword(ctx context.Context, id uint64, oldPassword, newPassword string) (*model.Store, error) {
+	if oldPassword == "" || newPassword == "" || oldPassword == newPassword {
+		return nil, ErrInvalid
+	}
+	store, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !verifyPassword(oldPassword, store.PasswordHash) {
+		return nil, ErrPassword
+	}
+	return s.update(ctx, id, map[string]any{"password": hashPassword(newPassword)})
+}
+
 func (s *StoreService) update(ctx context.Context, id uint64, fields map[string]any) (*model.Store, error) {
 	updated, err := s.repo.Update(ctx, id, fields)
 	if err != nil {
@@ -221,8 +248,9 @@ func hashPassword(password string) string {
 	if _, err := rand.Read(salt); err != nil {
 		panic(fmt.Errorf("生成密码盐失败: %w", err))
 	}
-	hash := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-	return fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=4$%s$%s", hex.EncodeToString(salt), hex.EncodeToString(hash))
+	hash := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
+	encode := base64.RawStdEncoding
+	return fmt.Sprintf("$argon2id$v=19$m=65536,t=3,p=4$%s$%s", encode.EncodeToString(salt), encode.EncodeToString(hash))
 }
 
 func verifyPassword(password, encoded string) bool {
@@ -242,8 +270,8 @@ func verifyPassword(password, encoded string) bool {
 		}
 		params[kv[0]] = uint32(value)
 	}
-	salt, err1 := hex.DecodeString(parts[4])
-	expected, err2 := hex.DecodeString(parts[5])
+	salt, err1 := decodeHashPart(parts[4])
+	expected, err2 := decodeHashPart(parts[5])
 	if err1 != nil || err2 != nil {
 		return false
 	}
@@ -253,6 +281,17 @@ func verifyPassword(password, encoded string) bool {
 	}
 	actual := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), uint32(len(expected)))
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func decodeHashPart(value string) ([]byte, error) {
+	if decoded, err := base64.RawStdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	// 兼容早期骨架版本生成的十六进制 Argon2 格式。
+	return hex.DecodeString(value)
 }
 
 func haversine(lon1, lat1, lon2, lat2 float64) float64 {

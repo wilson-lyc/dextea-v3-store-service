@@ -54,6 +54,14 @@ func (s *Server) GetStoreByAccount(ctx context.Context, in *storev1.GetStoreByAc
 	return view(store), nil
 }
 
+func (s *Server) AuthenticateStore(ctx context.Context, in *storev1.AuthenticateStoreRequest) (*storev1.StoreAuthInfo, error) {
+	store, err := s.service.Authenticate(ctx, in.Account, in.Password)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &storev1.StoreAuthInfo{StoreId: store.ID, Status: store.Status, Name: store.Name}, nil
+}
+
 func (s *Server) ListStores(ctx context.Context, in *storev1.ListStoresRequest) (*storev1.ListStoresResponse, error) {
 	stores, total, err := s.service.List(ctx, in.Page, in.PageSize, in.Keyword, in.Status)
 	if err != nil {
@@ -150,8 +158,15 @@ func (s *Server) UpdateStoreStatus(ctx context.Context, in *storev1.UpdateStoreS
 	return view(store), nil
 }
 
+func (s *Server) ChangeStorePassword(ctx context.Context, in *storev1.ChangeStorePasswordRequest) (*storev1.PasswordChangedResponse, error) {
+	if _, err := s.service.ChangePassword(ctx, in.Id, in.OldPassword, in.NewPassword); err != nil {
+		return nil, mapError(err)
+	}
+	return &storev1.PasswordChangedResponse{Changed: true}, nil
+}
+
 func (s *Server) ResetStorePassword(ctx context.Context, in *storev1.ResetStorePasswordRequest) (*storev1.ResetStorePasswordResponse, error) {
-	_, password, err := s.service.ResetPassword(ctx, in.Id, in.OldPassword, in.GetNewPassword())
+	_, password, err := s.service.ResetPassword(ctx, in.Id, "", in.GetNewPassword())
 	if err != nil {
 		return nil, mapError(err)
 	}
