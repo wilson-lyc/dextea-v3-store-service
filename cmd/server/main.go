@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/wilson-lyc/dextea-store-service/internal/config"
+	"github.com/wilson-lyc/dextea-store-service/internal/registry"
 	"github.com/wilson-lyc/dextea-store-service/internal/repository"
 	storerpc "github.com/wilson-lyc/dextea-store-service/internal/rpc"
 	"github.com/wilson-lyc/dextea-store-service/internal/service"
@@ -60,9 +61,19 @@ func main() {
 			log.Printf("[error] gRPC server stopped: %v", serveErr)
 		}
 	}()
+	var reg *registry.Registrar
+	if cfg.Nacos.Enabled {
+		reg, err = registry.Register(cfg.Nacos, cfg.Server.Addr)
+		if err != nil {
+			log.Fatalf("[fatal] %v", err)
+		}
+	}
 
 	<-ctx.Done()
 	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	if reg != nil {
+		reg.Deregister()
+	}
 
 	done := make(chan struct{})
 	go func() {

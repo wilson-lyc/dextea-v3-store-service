@@ -40,5 +40,5 @@ go run ./cmd/server -addr :9092
 
 1. 在 `dextea-proto/proto/store/v1/` 定义门店领域 RPC 契约并生成 Go 代码。
 2. 实现 `internal/repository`、`internal/service` 与 `internal/rpc`。
-3. 接入 MySQL、Redis GEO 和 Nacos 服务注册。
+3. 已接入 MySQL 与 Nacos 服务注册；通过 `configs/config.yaml` 配置 `dextea-store-service` 的 gRPC 注册信息。
 4. 逐步让管理端、店铺端和顾客 API 停止直接访问门店表。
