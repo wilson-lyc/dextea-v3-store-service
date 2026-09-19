@@ -1,0 +1,24 @@
+server:
+  addr: ":9092"
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: ""
+  database: "dextea"
+nacos:
+  enabled: true
+  server-addr: "127.0.0.1"
+  server-port: 8848
+  namespace-id: ""
+  service-name: "dextea-store-service"
+  group-name: "DEFAULT_GROUP"
+  cluster-name: "DEFAULT"
+  weight: 1
+  username: ""
+  password: ""
+auth:
+  enabled: false
+  admin-token: ""
+  business-token: ""
+  credential-token: ""

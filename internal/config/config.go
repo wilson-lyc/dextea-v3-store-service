@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,6 +12,14 @@ type Config struct {
 	Server ServerConfig `yaml:"server"`
 	MySQL  MySQLConfig  `yaml:"mysql"`
 	Nacos  NacosConfig  `yaml:"nacos"`
+	Auth   AuthConfig   `yaml:"auth"`
+}
+
+type AuthConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	AdminToken      string `yaml:"admin-token"`
+	BusinessToken   string `yaml:"business-token"`
+	CredentialToken string `yaml:"credential-token"`
 }
 
 type NacosConfig struct {
@@ -78,6 +87,12 @@ func Load(path string) (Config, error) {
 		if cfg.Nacos.Weight <= 0 {
 			cfg.Nacos.Weight = 1
 		}
+	}
+	cfg.Auth.AdminToken = strings.TrimSpace(cfg.Auth.AdminToken)
+	cfg.Auth.BusinessToken = strings.TrimSpace(cfg.Auth.BusinessToken)
+	cfg.Auth.CredentialToken = strings.TrimSpace(cfg.Auth.CredentialToken)
+	if cfg.Auth.Enabled && (cfg.Auth.AdminToken == "" || cfg.Auth.BusinessToken == "" || cfg.Auth.CredentialToken == "") {
+		return Config{}, fmt.Errorf("auth.enabled=true 时必须分别配置 admin-token、business-token 和 credential-token")
 	}
 	return cfg, nil
 }

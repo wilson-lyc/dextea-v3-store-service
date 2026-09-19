@@ -30,6 +30,8 @@ var ErrInvalid = errors.New("门店参数不合法")
 var ErrConflict = errors.New("门店账号已存在")
 var ErrPassword = errors.New("密码校验失败")
 
+const maxBatchStoreIDs = 500
+
 type StoreService struct{ repo repository.StoreRepository }
 
 func NewStoreService(repo repository.StoreRepository) *StoreService {
@@ -37,7 +39,12 @@ func NewStoreService(repo repository.StoreRepository) *StoreService {
 }
 
 func (s *StoreService) Create(ctx context.Context, input model.Store, initialPassword string) (*model.Store, string, error) {
-	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Account) == "" {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Account = strings.TrimSpace(input.Account)
+	if input.Name == "" || input.Account == "" {
+		return nil, "", ErrInvalid
+	}
+	if !validCoordinates(input.Longitude, input.Latitude) {
 		return nil, "", ErrInvalid
 	}
 	if !validStatus(input.Status) {
@@ -88,6 +95,80 @@ func (s *StoreService) GetByAccount(ctx context.Context, account string) (*model
 	return store, nil
 }
 
+// GetMany returns existing stores in the same order as the requested IDs.
+// Missing IDs are omitted. By default only customer-visible stores are returned.
+func (s *StoreService) GetMany(ctx context.Context, ids []uint64) ([]model.Store, error) {
+	if len(ids) > maxBatchStoreIDs {
+		return nil, ErrInvalid
+	}
+	uniqueIDs := make([]uint64, 0, len(ids))
+	seen := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			return nil, ErrInvalid
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return []model.Store{}, nil
+	}
+	stores, err := s.repo.FindByIDs(ctx, uniqueIDs, false)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uint64]model.Store, len(stores))
+	for _, store := range stores {
+		byID[store.ID] = store
+	}
+	ordered := make([]model.Store, 0, len(stores))
+	for _, id := range uniqueIDs {
+		if store, ok := byID[id]; ok {
+			ordered = append(ordered, store)
+		}
+	}
+	return ordered, nil
+}
+
+func (s *StoreService) GetManyAdmin(ctx context.Context, ids []uint64, includeUnavailable bool) ([]model.Store, error) {
+	if len(ids) > maxBatchStoreIDs {
+		return nil, ErrInvalid
+	}
+	uniqueIDs := make([]uint64, 0, len(ids))
+	seen := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			return nil, ErrInvalid
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return []model.Store{}, nil
+	}
+	stores, err := s.repo.FindByIDs(ctx, uniqueIDs, includeUnavailable)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uint64]model.Store, len(stores))
+	for _, store := range stores {
+		byID[store.ID] = store
+	}
+	ordered := make([]model.Store, 0, len(stores))
+	for _, id := range uniqueIDs {
+		if store, ok := byID[id]; ok {
+			ordered = append(ordered, store)
+		}
+	}
+	return ordered, nil
+}
+
 // Authenticate 校验门店凭证。Token 签发仍由调用方的 BFF 负责。
 func (s *StoreService) Authenticate(ctx context.Context, account, password string) (*model.Store, error) {
 	store, err := s.GetByAccount(ctx, account)
@@ -100,7 +181,7 @@ func (s *StoreService) Authenticate(ctx context.Context, account, password strin
 	return store, nil
 }
 
-func (s *StoreService) List(ctx context.Context, page, pageSize int32, keyword string, status *int32) ([]model.Store, int64, error) {
+func (s *StoreService) List(ctx context.Context, page, pageSize int32, filter repository.StoreListFilter) ([]model.Store, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -110,21 +191,49 @@ func (s *StoreService) List(ctx context.Context, page, pageSize int32, keyword s
 	if pageSize > 100 {
 		pageSize = 100
 	}
-	if status != nil && !validStatus(*status) {
+	if filter.Status != nil && !validStatus(*filter.Status) {
 		return nil, 0, ErrInvalid
 	}
-	return s.repo.List(ctx, page, pageSize, keyword, status)
+	return s.repo.List(ctx, page, pageSize, filter)
 }
 
-func (s *StoreService) Search(ctx context.Context, city, keyword string, includeUnavailable bool) ([]model.Store, error) {
-	return s.repo.Search(ctx, city, keyword, includeUnavailable)
+func (s *StoreService) Search(ctx context.Context, filter repository.StoreBusinessSearchFilter) ([]model.Store, error) {
+	return s.repo.Search(ctx, filter)
+}
+
+func (s *StoreService) SearchAdmin(ctx context.Context, filter repository.StoreAdminSearchFilter) ([]model.Store, error) {
+	if filter.Status != nil && !validStatus(*filter.Status) {
+		return nil, ErrInvalid
+	}
+	return s.repo.SearchAdmin(ctx, filter)
+}
+
+func (s *StoreService) ListCities(ctx context.Context) ([]string, error) {
+	return s.repo.ListCities(ctx)
+}
+
+func (s *StoreService) Statistics(ctx context.Context) ([]model.StoreStatusCount, error) {
+	counts, err := s.repo.CountByStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byStatus := make(map[int32]int64, len(counts))
+	for _, count := range counts {
+		byStatus[count.Status] = count.Count
+	}
+	statuses := []int32{StatusClosed, StatusOpen, StatusPending, StatusDefunct}
+	result := make([]model.StoreStatusCount, 0, len(statuses))
+	for _, status := range statuses {
+		result = append(result, model.StoreStatusCount{Status: status, Count: byStatus[status]})
+	}
+	return result, nil
 }
 
 func (s *StoreService) Nearby(ctx context.Context, longitude, latitude, distanceKm float64, count int32) ([]model.Store, []float64, error) {
-	if distanceKm <= 0 || count <= 0 || count > 100 {
+	if !validCoordinate(longitude, latitude) || distanceKm <= 0 || distanceKm > 1000 || count <= 0 || count > 100 {
 		return nil, nil, ErrInvalid
 	}
-	stores, err := s.repo.Search(ctx, "", "", false)
+	stores, err := s.repo.Search(ctx, repository.StoreBusinessSearchFilter{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -134,6 +243,9 @@ func (s *StoreService) Nearby(ctx context.Context, longitude, latitude, distance
 	}
 	candidates := make([]candidate, 0, len(stores))
 	for _, store := range stores {
+		if store.Longitude == 0 && store.Latitude == 0 {
+			continue
+		}
 		distance := haversine(longitude, latitude, store.Longitude, store.Latitude)
 		if distance <= distanceKm {
 			candidates = append(candidates, candidate{store: store, distance: distance})
@@ -158,6 +270,63 @@ func (s *StoreService) Nearby(ctx context.Context, longitude, latitude, distance
 	return out, distances, nil
 }
 
+// SearchWithDistance is the customer-facing search contract: only available
+// stores are considered and results are ordered by distance from the caller.
+func (s *StoreService) SearchWithDistance(ctx context.Context, longitude, latitude float64, filter repository.StoreBusinessSearchFilter) ([]model.Store, []float64, error) {
+	if !validCoordinate(longitude, latitude) {
+		return nil, nil, ErrInvalid
+	}
+	stores, err := s.repo.Search(ctx, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	type candidate struct {
+		store    model.Store
+		distance float64
+	}
+	candidates := make([]candidate, 0, len(stores))
+	for _, store := range stores {
+		if store.Longitude == 0 && store.Latitude == 0 {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			store:    store,
+			distance: haversine(longitude, latitude, store.Longitude, store.Latitude),
+		})
+	}
+	for i := 0; i < len(candidates); i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].distance < candidates[i].distance {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+		}
+	}
+	result := make([]model.Store, 0, len(candidates))
+	distances := make([]float64, 0, len(candidates))
+	for _, item := range candidates {
+		result = append(result, item.store)
+		distances = append(distances, item.distance)
+	}
+	return result, distances, nil
+}
+
+func (s *StoreService) GetWithDistance(ctx context.Context, id uint64, longitude, latitude float64) (*model.Store, float64, error) {
+	if !validCoordinate(longitude, latitude) {
+		return nil, 0, ErrInvalid
+	}
+	store, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !store.Available() {
+		return nil, 0, ErrNotFound
+	}
+	if store.Longitude == 0 && store.Latitude == 0 {
+		return store, 0, nil
+	}
+	return store, haversine(longitude, latitude, store.Longitude, store.Latitude), nil
+}
+
 func (s *StoreService) UpdateProfile(ctx context.Context, id uint64, fields map[string]any) (*model.Store, error) {
 	if id == 0 {
 		return nil, ErrInvalid
@@ -180,6 +349,14 @@ func (s *StoreService) UpdateLocation(ctx context.Context, id uint64, fields map
 		if !allowed[key] {
 			return nil, ErrInvalid
 		}
+	}
+	longitude, hasLongitude := numericField(fields["longitude"])
+	latitude, hasLatitude := numericField(fields["latitude"])
+	if hasLongitude != hasLatitude {
+		return nil, ErrInvalid
+	}
+	if hasLongitude && !validCoordinate(longitude, latitude) {
+		return nil, ErrInvalid
 	}
 	return s.update(ctx, id, fields)
 }
@@ -233,6 +410,39 @@ func (s *StoreService) update(ctx context.Context, id uint64, fields map[string]
 
 func validStatus(value int32) bool {
 	return value >= StatusClosed && value <= StatusDefunct
+}
+
+func validCoordinate(longitude, latitude float64) bool {
+	return !math.IsNaN(longitude) && !math.IsInf(longitude, 0) && longitude >= -180 && longitude <= 180 &&
+		!math.IsNaN(latitude) && !math.IsInf(latitude, 0) && latitude >= -90 && latitude <= 90
+}
+
+func validCoordinates(longitude, latitude float64) bool {
+	if longitude == 0 && latitude == 0 {
+		return true
+	}
+	return validCoordinate(longitude, latitude)
+}
+
+func numericField(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func randomPassword() string {

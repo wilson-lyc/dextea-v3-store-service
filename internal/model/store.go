@@ -22,3 +22,8 @@ type Store struct {
 }
 
 func (s Store) Available() bool { return s.Status == 0 || s.Status == 1 }
+
+type StoreStatusCount struct {
+	Status int32 `db:"status"`
+	Count  int64 `db:"count"`
+}

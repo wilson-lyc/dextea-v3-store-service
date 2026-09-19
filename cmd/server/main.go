@@ -37,15 +37,24 @@ func main() {
 	defer db.Close()
 
 	storeService := service.NewStoreService(repository.NewStoreRepository(db))
-	storeServer := storerpc.NewServer(storeService)
 
 	listener, err := net.Listen("tcp", cfg.Server.Addr)
 	if err != nil {
 		log.Fatalf("[fatal] listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
-	storev1.RegisterStoreServiceServer(grpcServer, storeServer)
+	serverOptions := make([]grpc.ServerOption, 0, 1)
+	if cfg.Auth.Enabled {
+		serverOptions = append(serverOptions, grpc.UnaryInterceptor(storerpc.RoleTokenInterceptor(storerpc.RoleTokens{
+			Admin:      cfg.Auth.AdminToken,
+			Business:   cfg.Auth.BusinessToken,
+			Credential: cfg.Auth.CredentialToken,
+		})))
+	}
+	grpcServer := grpc.NewServer(serverOptions...)
+	storev1.RegisterStoreAdminServiceServer(grpcServer, storerpc.NewAdminServer(storeService))
+	storev1.RegisterStoreBusinessServiceServer(grpcServer, storerpc.NewBusinessServer(storeService))
+	storev1.RegisterStoreCredentialServiceServer(grpcServer, storerpc.NewCredentialServer(storeService))
 
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
