@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
@@ -21,7 +22,7 @@ type Registrar struct {
 }
 
 func Register(cfg config.NacosConfig, listenAddr string) (*Registrar, error) {
-	ip, port, err := endpoint(listenAddr)
+	ip, port, err := endpoint(listenAddr, cfg.InstanceIP)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +47,7 @@ func (r *Registrar) Deregister() {
 	}
 }
 
-func endpoint(addr string) (string, uint64, error) {
+func endpoint(addr, configuredIP string) (string, uint64, error) {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", 0, fmt.Errorf("解析监听地址 %s 失败: %w", addr, err)
@@ -55,7 +56,9 @@ func endpoint(addr string) (string, uint64, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("解析监听端口 %s 失败: %w", portText, err)
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
+	if strings.TrimSpace(configuredIP) != "" {
+		host = strings.TrimSpace(configuredIP)
+	} else if host == "" || host == "0.0.0.0" || host == "::" {
 		conn, err := net.Dial("udp", "8.8.8.8:80")
 		if err != nil {
 			return "", 0, fmt.Errorf("获取本机 IP 失败: %w", err)

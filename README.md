@@ -42,4 +42,6 @@ go run ./cmd/server -addr :9092
 2. admin 管理调用使用 `StoreAdminService` 的创建、分页、资料/位置/状态更新、统计和重置密码接口。
 3. 门店账号登录与改密使用独立的 `StoreCredentialService`；顾客业务 token 不应获得该接口权限。
 4. 已接入 MySQL 与 Nacos 服务注册；通过 `configs/config.yaml` 配置 `dextea-store-service` 的 gRPC 注册信息。
+
+Nacos 配置统一使用 `NACOS_ENABLED`、`NACOS_SERVER_ADDR`、`NACOS_NAMESPACE`、`NACOS_GROUP`、`NACOS_CLUSTER`、`NACOS_SERVICE_NAME`、`NACOS_INSTANCE_IP`、`NACOS_USERNAME` 和 `NACOS_PASSWORD`。变量可写入项目根目录 `.env`，也可由系统环境变量注入；系统环境变量优先于 `.env`，详见 `.env.example`。
 5. 商品、菜单、客制化、原料及其门店可售状态不属于本服务，仍由商品服务拥有；订单、取餐码等交易数据也不迁入本服务。
